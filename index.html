@@ -22,7 +22,7 @@
 .liveOverlay{inset:auto 0 auto 0!important;top:-51px!important;height:102px!important;z-index:80!important;grid-template-columns:1fr 1fr!important;gap:7px!important;align-items:center!important}.liveSide{height:96px!important;border-radius:12px!important;grid-template-columns:38px 1fr 52px!important;padding:7px 8px!important}.liveSide b{font-size:23px!important}.liveScore{font-size:22px!important}.liveCardRow{height:70px!important;grid-template-columns:repeat(3,36px)!important;gap:4px!important}.liveCardSlot{width:36px!important;height:52px!important;border-radius:7px!important}.liveCardSlot .playingCard{width:34px!important;height:50px!important;font-size:12px!important}.liveWinner{top:-76px!important;font-size:22px!important;text-shadow:0 2px 8px #000}.roadHead{align-items:flex-start!important;gap:6px}.roadHead span:first-child{white-space:nowrap}.roadHead #statsText{font-size:10.5px!important;line-height:1.35;text-align:right;white-space:normal}.simpleRoad{grid-template-columns:repeat(16,1fr)!important}
 @media(max-width:390px){.liveOverlay{top:-50px!important;height:96px!important}.liveSide{height:90px!important;grid-template-columns:34px 1fr 48px!important}.liveSide b{font-size:21px!important}.liveScore{font-size:20px!important}.liveCardRow{grid-template-columns:repeat(3,32px)!important}.liveCardSlot{width:32px!important;height:48px!important}.liveCardSlot .playingCard{width:30px!important;height:46px!important;font-size:11px!important}}
 
-/* v7 road stat balls + 70-hand shoe cut */
+/* v8 sync repair: connection monitor + shared state version */
 .roadHead #statsText{display:flex!important;justify-content:flex-end;align-items:center;gap:5px!important;flex-wrap:wrap;font-size:11px!important;line-height:1!important;text-align:right!important;white-space:normal!important}
 .statChip{display:inline-flex;align-items:center;gap:3px;font-weight:1000;color:#fff8d5;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.08);border-radius:999px;padding:2px 5px;min-height:22px}
 .statChip b{font-size:12px;line-height:1;text-shadow:0 1px 4px #000}
@@ -31,6 +31,28 @@
 .statBall.red{background:linear-gradient(180deg,#ff6470,#a90f1e)}
 .statBall.green{background:linear-gradient(180deg,#39de83,#08723d)}
 @media(max-width:390px){.statChip{padding:2px 4px}.statBall{width:17px;height:17px}.statChip b{font-size:11px}}
+
+/* v9 mobile fix: keep bottom live result scores visible on phones */
+.liveSide{min-width:0!important}.liveCardRow{min-width:0!important}.liveScore{display:block!important;white-space:nowrap!important;overflow:visible!important;min-width:48px!important;position:relative;z-index:3}
+@media(max-width:430px){
+  .liveOverlay{top:-49px!important;height:96px!important;gap:5px!important;left:0!important;right:0!important}
+  .liveSide{height:90px!important;grid-template-columns:28px minmax(72px,1fr) 44px!important;gap:3px!important;padding:6px 6px!important;overflow:visible!important}
+  .liveSide b{font-size:19px!important}
+  .liveScore{font-size:18px!important;min-width:42px!important;text-align:right!important;line-height:1!important;text-shadow:0 2px 6px rgba(0,0,0,.75)!important}
+  .liveCardRow{height:62px!important;grid-template-columns:repeat(3,25px)!important;gap:2px!important;justify-content:center!important;overflow:visible!important}
+  .liveCardSlot{width:25px!important;height:38px!important;border-radius:5px!important}
+  .liveCardSlot .playingCard{width:24px!important;height:37px!important;font-size:9px!important}
+  .liveCardSlot .playingCard.back:after{width:12px!important;height:17px!important}
+}
+@media(max-width:360px){
+  .liveOverlay{gap:4px!important}
+  .liveSide{grid-template-columns:24px minmax(64px,1fr) 39px!important;padding:5px 4px!important}
+  .liveSide b{font-size:17px!important}
+  .liveScore{font-size:16px!important;min-width:38px!important}
+  .liveCardRow{grid-template-columns:repeat(3,22px)!important;gap:1px!important}
+  .liveCardSlot{width:22px!important;height:34px!important}
+  .liveCardSlot .playingCard{width:21px!important;height:33px!important;font-size:8px!important}
+}
 </style>
 </head>
 <body>
@@ -96,6 +118,7 @@
 (function(){
 'use strict';
 const $=id=>document.getElementById(id);
+const GAME_VERSION='v9-mobile-score';
 const ROOM_SECONDS=15, AREA_MAX=200000, PREDEAL_STEP_MS=820, FLIP_STEP_MS=1000, SETTLE_HOLD_MS=3000, SHOE_DECKS=8, SHUFFLE_AT=80, SHUFFLE_AFTER_ROUNDS=70;
 const BET_KEYS=['PLAYER_PAIR','LUCKY7','SUPER7','LUCKY6','BANKER_PAIR','PLAYER','TIE','BANKER'];
 const LABEL={PLAYER:'闲',BANKER:'庄',TIE:'和',PLAYER_PAIR:'闲对',BANKER_PAIR:'庄对',LUCKY7:'幸运七',LUCKY6:'幸运六',SUPER7:'超级幸运七'};
@@ -189,8 +212,15 @@ function emptyDot(){const d=document.createElement('div');d.className='roadDot';
 function renderBeadRoad(h){const el=$('beadRoad');if(!el)return;el.innerHTML='';h.slice(-64).forEach(r=>el.appendChild(dot(r.winner,r.winner==='PLAYER'?'闲':r.winner==='BANKER'?'庄':'和')));for(let i=el.children.length;i<24;i++)el.appendChild(emptyDot())}
 function statChip(cls,mark,count){return '<span class="statChip"><i class="statBall '+cls+'">'+(mark||'')+'</i><b>'+fmt(count)+'</b></span>'}
 function renderRoad(history){const h=Array.isArray(history)?history.map(cleanResult).filter(Boolean):[];renderBeadRoad(h);const pc=h.filter(r=>r.winner==='PLAYER').length,bc=h.filter(r=>r.winner==='BANKER').length,tc=h.filter(r=>r.winner==='TIE').length,l6=h.filter(r=>isEventHit('LUCKY6',r)).length,l7=h.filter(r=>isEventHit('LUCKY7',r)).length;const st=$('statsText');if(st)st.innerHTML=statChip('blue','',pc)+statChip('red','',bc)+statChip('green','',tc)+statChip('red','6',l6)+statChip('blue','7',l7);$('shoeNo').textContent='局号 GM'+String(Math.max(1,currentRoundNo())).padStart(10,'0');for(const k of BET_KEYS){const el=$('miss_'+k);if(!el)continue;let miss=0;for(let i=h.length-1;i>=0;i--){if(isEventHit(k,h[i]))break;miss++}el.textContent=miss+'局未出'}}
-function makeRoundPayload(roundNo,history,sourceState){const hist=Array.isArray(history)?history:[],completed=completedRoundsForNext(sourceState||{},hist),made=makeInitialFromShoe(sourceState||{},completed);const t=now();return {phase:'betting',roundNo:Number(roundNo||1),deadline:t+ROOM_SECONDS*1000,betStartAt:firebase.database.ServerValue.TIMESTAMP,history:hist,initial:made.initial,result:null,resultId:t+Math.floor(Math.random()*1000),dealStartAt:null,shoe:made.shoe,shoeNo:made.shoeNo,shoeRemain:made.shoeRemain,shoeRoundNo:made.shoeRoundNo,shuffleReason:made.shuffleReason||null,shuffledAt:made.shuffled?t:((sourceState&&sourceState.shuffledAt)||null),updatedAt:firebase.database.ServerValue.TIMESTAMP,createdAt:firebase.database.ServerValue.TIMESTAMP}}
+function makeRoundPayload(roundNo,history,sourceState){const hist=Array.isArray(history)?history:[],completed=completedRoundsForNext(sourceState||{},hist),made=makeInitialFromShoe(sourceState||{},completed);const t=now();return {version:GAME_VERSION,phase:'betting',roundNo:Number(roundNo||1),deadline:t+ROOM_SECONDS*1000,betStartAt:firebase.database.ServerValue.TIMESTAMP,history:hist,initial:made.initial,result:null,resultId:t+Math.floor(Math.random()*1000),dealStartAt:null,shoe:made.shoe,shoeNo:made.shoeNo,shoeRemain:made.shoeRemain,shoeRoundNo:made.shoeRoundNo,shuffleReason:made.shuffleReason||null,shuffledAt:made.shuffled?t:((sourceState&&sourceState.shuffledAt)||null),updatedAt:firebase.database.ServerValue.TIMESTAMP,createdAt:firebase.database.ServerValue.TIMESTAMP}}
 function initialState(){return makeRoundPayload(1,[],{})}
+function normalizeRoomState(s){
+  if(!s||typeof s!=='object'||!s.phase||!Number(s.deadline))return initialState();
+  const out=Object.assign({},s);
+  if(!out.version)out.version=GAME_VERSION;
+  if(!Array.isArray(out.history))out.history=[];
+  return out;
+}
 function applyRemoteBets(v){ONLINE.remoteBets=(v&&typeof v==='object')?v:{};updateBetsDisplay()}
 function dealAnimationMs(r){const n=dealSequence(r).length||4;return (n+1)*FLIP_STEP_MS+SETTLE_HOLD_MS}
 function ensureBettingResult(){if(!ONLINE.ready||!ONLINE.stateRef||ensureBettingResult.busy)return;ensureBettingResult.busy=true;ONLINE.stateRef.transaction(s=>{if(!s||s.phase!=='betting'||cleanInitial(s.initial)||cleanInitial(s.result))return s;const payload=makeRoundPayload(Number(s.roundNo||1),Array.isArray(s.history)?s.history:[],s);payload.createdAt=s.createdAt||firebase.database.ServerValue.TIMESTAMP;return Object.assign({},s,payload,{roundNo:Number(s.roundNo||1),updatedAt:firebase.database.ServerValue.TIMESTAMP})},()=>{ensureBettingResult.busy=false})}
@@ -199,7 +229,42 @@ function updateCountdown(){const s=ONLINE.state;if(!s){setClockValue('--',0);ret
 function tryStartDealing(){if(!ONLINE.ready||!ONLINE.stateRef)return;ONLINE.stateRef.transaction(s=>{s=s||initialState();if(s.phase!=='betting')return s;if(Number(s.deadline||0)>now()+250)return s;let init=cleanInitial(s.initial)||cleanInitial(s.result);if(!init){const payload=makeRoundPayload(Number(s.roundNo||1),Array.isArray(s.history)?s.history:[],s);init=payload.initial;s=Object.assign({},s,payload)}const done=finishRoundFromInitial(init,s);if(!done)return s;return Object.assign({},s,{phase:'dealing',initial:init,result:done.result,resultId:s.resultId||Date.now()+Math.floor(Math.random()*1000),dealStartAt:firebase.database.ServerValue.TIMESTAMP,dealerId:clientId,shoe:done.shoe,shoeNo:done.shoeNo,shoeRemain:done.shoeRemain,shoeRoundNo:done.shoeRoundNo,shuffleReason:done.shuffleReason||s.shuffleReason||null,shuffledAt:done.shuffled?now():(s.shuffledAt||null),updatedAt:firebase.database.ServerValue.TIMESTAMP})},(err,committed)=>{if(err)diag('开牌写入失败 '+(err.message||err));else if(committed)diag('倒计时结束，按百家乐规则补牌并同步翻牌')})}
 function scheduleFinish(resultId,r){clearTimeout(ONLINE.finishTimer);ONLINE.finishTimer=setTimeout(()=>finishDealing(resultId),dealAnimationMs(r))}
 function finishDealing(resultId){if(!ONLINE.ready||!ONLINE.stateRef)return;ONLINE.stateRef.transaction(s=>{if(!s||s.phase!=='dealing'||Number(s.resultId)!==Number(resultId))return s;const r=cleanResult(s.result);const history=(Array.isArray(s.history)?s.history:[]).map(cleanResult).filter(Boolean);const last=history[history.length-1];const already=last&&last.createdAt===r.createdAt&&last.winner===r.winner&&last.pt===r.pt&&last.bt===r.bt;const next=makeRoundPayload(Number(s.roundNo||1)+1,(already?history:history.concat([r])).slice(-160),s);next.createdAt=s.createdAt||firebase.database.ServerValue.TIMESTAMP;return next},(err,committed)=>{if(err)diag('进入下一局失败 '+(err.message||err));else if(committed){diag('结算完成，进入新的15秒下注倒计时');if(ONLINE.betRootRef)ONLINE.betRootRef.remove().catch(()=>{})}})}
-function initFirebase(){roomBtn.textContent=roomId;setStatus('连接中',false);diag('准备连接 Firebase');if(!window.BACCARAT_FIREBASE_CONFIG||!window.BACCARAT_FIREBASE_CONFIG.databaseURL){setStatus('单机',false);diag('缺少 firebase-config.js');return false}if(!window.firebase||!firebase.initializeApp||!firebase.database){setStatus('SDK未加载',false);diag('Firebase SDK 未加载');return false}try{if(!firebase.apps.length)firebase.initializeApp(window.BACCARAT_FIREBASE_CONFIG);ONLINE.db=firebase.database();ONLINE.roomRef=ONLINE.db.ref('rooms/'+roomId);ONLINE.stateRef=ONLINE.roomRef.child('state');ONLINE.betRootRef=ONLINE.roomRef.child('clientBets');ONLINE.myBetRef=ONLINE.betRootRef.child(clientId);ONLINE.ready=true;ONLINE.db.ref('.info/serverTimeOffset').on('value',snap=>{ONLINE.offset=Number(snap.val()||0)});ONLINE.myBetRef.onDisconnect().remove();ONLINE.stateRef.transaction(s=>s||initialState(),(err,committed,snap)=>{if(err){setStatus('连接失败',false);diag('房间初始化失败 '+(err.message||err));return}setStatus('已同步',true);diag((committed?'创建房间成功':'读取房间成功')+'，会话 '+clientId.slice(-4));const v=snap&&snap.val&&snap.val();if(v)applyState(v)});ONLINE.stateRef.on('value',snap=>{const v=snap.val();if(v){setStatus('已同步',true);applyState(v)}});ONLINE.betRootRef.on('value',snap=>applyRemoteBets(snap.val()||{}));clearInterval(tickTimer);tickTimer=setInterval(updateCountdown,250);clearInterval(resyncTimer);resyncTimer=setInterval(()=>{if(betTotal(bets)>0)syncMyBets()},1200);setTimeout(syncMyBets,500);return true}catch(e){setStatus('连接失败',false);diag('Firebase 初始化异常 '+(e.message||e));return false}}
+function initFirebase(){
+  roomBtn.textContent=roomId;
+  setStatus('连接中',false);
+  diag('准备连接 Firebase：房间 '+roomId);
+  if(!window.BACCARAT_FIREBASE_CONFIG||!window.BACCARAT_FIREBASE_CONFIG.databaseURL){setStatus('单机',false);diag('缺少 firebase-config.js');return false}
+  if(!window.firebase||!firebase.initializeApp||!firebase.database){setStatus('SDK未加载',false);diag('Firebase SDK 未加载');return false}
+  try{
+    if(!firebase.apps.length)firebase.initializeApp(window.BACCARAT_FIREBASE_CONFIG);
+    ONLINE.db=firebase.database();
+    ONLINE.roomRef=ONLINE.db.ref('rooms/'+roomId);
+    ONLINE.stateRef=ONLINE.roomRef.child('state');
+    ONLINE.betRootRef=ONLINE.roomRef.child('clientBets');
+    ONLINE.myBetRef=ONLINE.betRootRef.child(clientId);
+    ONLINE.ready=true;
+    try{ONLINE.stateRef.keepSynced(true);ONLINE.betRootRef.keepSynced(true)}catch(_e){}
+    ONLINE.db.ref('.info/serverTimeOffset').on('value',snap=>{ONLINE.offset=Number(snap.val()||0)});
+    ONLINE.db.ref('.info/connected').on('value',snap=>{
+      const connected=!!snap.val();
+      if(connected){setStatus('联机中',true);diag('已连接 Firebase，同房间自动同步：'+roomId)}
+      else{setStatus('离线重连',false);diag('网络断开，正在自动重连')}
+    });
+    ONLINE.myBetRef.onDisconnect().remove();
+    ONLINE.stateRef.transaction(s=>normalizeRoomState(s),(err,committed,snap)=>{
+      if(err){setStatus('连接失败',false);diag('房间初始化失败 '+(err.message||err));return}
+      setStatus('联机中',true);
+      diag((committed?'房间状态已校准':'读取房间成功')+'，会话 '+clientId.slice(-4)+'，房间 '+roomId);
+      const v=snap&&snap.val&&snap.val();if(v)applyState(v)
+    });
+    ONLINE.stateRef.on('value',snap=>{const v=snap.val();if(v){setStatus('联机中',true);applyState(v)}},err=>{setStatus('连接失败',false);diag('读取房间失败 '+(err&&err.message||err))});
+    ONLINE.betRootRef.on('value',snap=>applyRemoteBets(snap.val()||{}),err=>{diag('下注同步失败 '+(err&&err.message||err))});
+    clearInterval(tickTimer);tickTimer=setInterval(updateCountdown,250);
+    clearInterval(resyncTimer);resyncTimer=setInterval(()=>{if(betTotal(bets)>0)syncMyBets()},1200);
+    setTimeout(syncMyBets,500);
+    return true
+  }catch(e){setStatus('连接失败',false);diag('Firebase 初始化异常 '+(e.message||e));return false}
+}
 function openRoom(){const v=prompt('输入房间号，例如 VIP001',roomId);if(!v)return;const r=cleanRoom(v);const u=new URL(location.href);u.searchParams.set('room',r);u.searchParams.set('v','room-'+Date.now());location.href=u.toString()}
 function openRedeem(){$('redeemMask').classList.add('show');$('redeemInput').value='';setTimeout(()=>$('redeemInput').focus(),80)}
 function closeRedeem(){$('redeemMask').classList.remove('show')}
