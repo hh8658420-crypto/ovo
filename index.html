@@ -5,7 +5,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
-<title>百家乐概率模拟器 - FINAL_STABLE_REST_SYNC_V5</title>
+<title>百家乐概率模拟器 - FINAL_STABLE_REST_SYNC_V6_FIXED</title>
 <style>
 :root{
   --red0:#4b080d;--red1:#7e1119;--red2:#b72832;--red3:#d2494b;
@@ -516,13 +516,17 @@ function setOnlineStatus(text, cls='off'){
 }
 function setRoomLabel(){if(roomBtn)roomBtn.textContent='房间 '+ONLINE.roomId}
 
-/* === FINAL_STABLE_REST_SYNC_V5
+/* === FINAL_STABLE_REST_SYNC_V6_FIXED
    只用 Firebase REST + ETag 乐观锁同步，不再依赖 SDK transaction。
-   数据写入位置：rooms/<room>/liveV5
+   数据写入位置：rooms/<room>/liveV6
    解决：多设备倒计时不同步、开奖结果不同步、下注金额不同步、一局后卡住。
 */
-const SYNC_VERSION='FINAL_STABLE_REST_SYNC_V5';
-const LIVE_NODE='liveV5';
+const SYNC_VERSION='FINAL_STABLE_REST_SYNC_V6_FIXED';
+const LIVE_NODE='liveV6';
+function dbBase(){
+  const c=window.BACCARAT_FIREBASE_CONFIG||{};
+  return String(c.databaseURL||'').replace(/\/$/,'');
+}
 function liveBaseUrl(){return dbBase()+'/rooms/'+encodeURIComponent(ONLINE.roomId)+'/'+LIVE_NODE+'.json'}
 function myBetsUrl(){return dbBase()+'/rooms/'+encodeURIComponent(ONLINE.roomId)+'/'+LIVE_NODE+'/clientBets/'+encodeURIComponent(ONLINE.clientId)+'.json'}
 function currentBetRoundNo(){
@@ -744,11 +748,12 @@ async function initRestStableOnline(reason){
   }
   ONLINE.enabled=true;
   ONLINE.ready=true;
-  ONLINE.mode='restV5';
-  ONLINE.restUrl=liveBaseUrl();
+  ONLINE.mode='restV6';
   setOnlineStatus('联机中','on');
-  diag('REST稳定联机启动｜写入 rooms/'+ONLINE.roomId+'/'+LIVE_NODE,'ok');
   try{
+    ONLINE.restUrl=liveBaseUrl();
+    if(!ONLINE.restUrl || !dbBase())throw new Error('databaseURL为空');
+    diag('REST稳定联机启动｜写入 rooms/'+ONLINE.roomId+'/'+LIVE_NODE,'ok');
     const {value,etag}=await restGetLiveEtag();
     let s=normalizeRoomState(value);
     if(!value || (value&&value.version!==SYNC_VERSION)){
@@ -790,7 +795,8 @@ function initOnline(){
       location.href=u.toString();
     });
   }
-  return initRestStableOnline('force REST');
+  initRestStableOnline('force REST');
+  return true;
 }
 
 function betTotal(obj=bets){return Object.values(obj).reduce((s,v)=>s+Number(v||0),0)}
@@ -958,7 +964,9 @@ function initDealerVideo(){
   v.addEventListener('error',()=>{ app.classList.remove('dealer-video-ready'); });
 })();
 
-deck=makeDeck();initGame();initDealerVideo();setInterval(updateClockText,30000);if(!initOnline())startTimer();
+deck=makeDeck();initGame();initDealerVideo();setInterval(updateClockText,30000);
+try{if(!initOnline())startTimer();}catch(e){diag('启动失败：'+(e.message||e),'err');setOnlineStatus('启动失败','off');startTimer();}
+setTimeout(()=>{if(netDiag&&/启动中/.test(netDiag.textContent||'')){diag('启动超时：请检查 firebase-config.js 或网络','err');startTimer()}},3000);
 })();
 </script>
 </body>
