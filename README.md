@@ -1,20 +1,14 @@
-# yuan 原页面 + 当前联机同步功能
+# OVO VIP 联机同步版
 
-这个包是从你上传的 `yuan.zip` 原始源码重新生成的，界面以 `yuan.zip` 为准。杂音频文件没有删除，也没有处理。
+上传方式：把本文件夹里的 index.html、firebase-config.js、firebase-rules-demo.json 上传到 GitHub 仓库根目录，覆盖旧文件。
 
-## 合并内容
+打开测试：
+https://hh8658420-crypto.github.io/ovo/?v=vip-sync-ui-1&room=VIP001
 
-- 保留 `yuan.zip` 页面布局、样式、视频、音频。
-- 加入当前稳定联机同步功能：倒计时同步、开奖结果同步、开奖记录/路单同步、下注金额数字同步。
-- 先下注的人可以看到后下注的人追加下注数字。
-- 不生成别人的筹码堆；别人下注只更新数字。
-- 本机本金只按本机下注结算，别人下注不会影响你的本金。
+本版修复：
+- 每个页面会话使用独立玩家 ID，同一手机/同一浏览器开两个页面测试也不会互相覆盖下注。
+- 下注数字走 rooms/{房间}/clientBets/{玩家会话ID} 实时同步。
+- 开奖/倒计时/开奖记录走 rooms/{房间}/state 实时同步。
+- 页面样式改成接近 baccarat-vip final 的移动端布局。
 
-## 上传
-
-1. 解压这个 ZIP。
-2. 把解压后的所有文件上传到 `ovo` 仓库根目录。
-3. 覆盖旧文件并 Commit。
-4. 打开：`https://hh8658420-crypto.github.io/ovo/?v=yuan-plus-online-1&room=VIP001`
-
-如果 Firebase 数据库测试规则没打开，可以参考 `firebase-rules-demo.json`。
+注意：这是前端模拟游戏，不含真钱支付。
