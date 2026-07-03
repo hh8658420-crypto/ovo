@@ -5,7 +5,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
-<title>百家乐概率模拟器</title>
+<title>百家乐概率模拟器 - FINAL_STABLE_REST_SYNC_V5</title>
 <style>
 :root{
   --red0:#4b080d;--red1:#7e1119;--red2:#b72832;--red3:#d2494b;
@@ -507,7 +507,7 @@ function redeemCode(){
 }
 function updateBalance(){balanceText.textContent='本金:'+money(bankroll);saveBankroll()}
 function updateClockText(){const d=new Date();timeText.textContent=String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}
-function serverNow(){return Date.now()+(ONLINE.offset||0)}
+function serverNow(){return Date.now()}
 function setOnlineStatus(text, cls='off'){
   if(!onlineStatus)return;
   onlineStatus.textContent=text;
@@ -515,215 +515,284 @@ function setOnlineStatus(text, cls='off'){
   onlineStatus.classList.add(cls);
 }
 function setRoomLabel(){if(roomBtn)roomBtn.textContent='房间 '+ONLINE.roomId}
-function currentBetRoundKey(){const st=ONLINE.state||{};const base=Math.max(0,Number(st.roundNo||roundNo||0));return 'R'+(st.phase==='dealing'?base:base+1)}
-function clonePlainBets(obj){const out={};for(const [k,v] of Object.entries(obj||{})){const n=Math.max(0,Math.round(Number(v||0)));if(n>0)out[k]=n}return out}
-function roomBetsUrl(){return dbBase()+'/rooms/'+encodeURIComponent(ONLINE.roomId)+'/clientBets.json'}
-function myBetsUrl(){return dbBase()+'/rooms/'+encodeURIComponent(ONLINE.roomId)+'/clientBets/'+encodeURIComponent(ONLINE.clientId)+'.json'}
-function applyRemoteBetState(v){ONLINE.remoteBets=(v&&typeof v==='object')?v:{};updateBetsDisplay()}
+
+/* === FINAL_STABLE_REST_SYNC_V5
+   只用 Firebase REST + ETag 乐观锁同步，不再依赖 SDK transaction。
+   数据写入位置：rooms/<room>/liveV5
+   解决：多设备倒计时不同步、开奖结果不同步、下注金额不同步、一局后卡住。
+*/
+const SYNC_VERSION='FINAL_STABLE_REST_SYNC_V5';
+const LIVE_NODE='liveV5';
+function liveBaseUrl(){return dbBase()+'/rooms/'+encodeURIComponent(ONLINE.roomId)+'/'+LIVE_NODE+'.json'}
+function myBetsUrl(){return dbBase()+'/rooms/'+encodeURIComponent(ONLINE.roomId)+'/'+LIVE_NODE+'/clientBets/'+encodeURIComponent(ONLINE.clientId)+'.json'}
+function currentBetRoundNo(){
+  const st=ONLINE.state||{};
+  const rn=Math.max(0,Number(st.roundNo||roundNo||0));
+  return st.phase==='dealing'?rn:rn+1;
+}
+function currentBetRoundKey(){return 'R'+currentBetRoundNo()}
+function clonePlainBets(obj){
+  const out={};
+  for(const [k,v] of Object.entries(obj||{})){
+    const n=Math.max(0,Math.round(Number(v||0)));
+    if(n>0)out[k]=n;
+  }
+  return out;
+}
+function cleanClientBets(v){
+  return (v&&typeof v==='object'&&!Array.isArray(v))?v:{};
+}
+function applyRemoteBetState(v){
+  ONLINE.remoteBets=cleanClientBets(v);
+  if(ONLINE.state)ONLINE.state.clientBets=ONLINE.remoteBets;
+  updateBetsDisplay();
+}
 function aggregateRoomBets(){
-  const source=(ONLINE.state&&ONLINE.state.clientBets)||ONLINE.remoteBets||{};
+  const source=cleanClientBets((ONLINE.state&&ONLINE.state.clientBets)||ONLINE.remoteBets);
   const key=currentBetRoundKey();
   const total={PLAYER:0,BANKER:0,TIE:0,PLAYER_PAIR:0,BANKER_PAIR:0,LUCKY7:0,LUCKY6:0,SUPER7:0};
   for(const item of Object.values(source)){
     if(!item||item.roundKey!==key)continue;
     const map=(item.bets&&typeof item.bets==='object')?item.bets:item;
     for(const [k,v] of Object.entries(map)){
-      if(Object.prototype.hasOwnProperty.call(total,k))total[k]+=Math.max(0,Math.round(Number(v||0)));
+      if(Object.prototype.hasOwnProperty.call(total,k)){
+        total[k]+=Math.max(0,Math.round(Number(v||0)));
+      }
     }
   }
   return total;
 }
-async function restGetBets(){const r=await fetch(roomBetsUrl()+'?t='+Date.now(),{cache:'no-store'});if(!r.ok)throw new Error('GETBETS '+r.status+' '+(await r.text()).slice(0,120));return r.json()}
-async function restPutMyBets(payload){const r=await fetch(myBetsUrl(),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(!r.ok)throw new Error('PUTBETS '+r.status+' '+(await r.text()).slice(0,160));return r.json()}
+function normalizeRoomState(s){
+  if(!s||typeof s!=='object'||s.version!==SYNC_VERSION){
+    return {
+      version:SYNC_VERSION,
+      phase:'betting',
+      roundNo:0,
+      deadline:Date.now()+ROUND_SECONDS*1000,
+      result:null,
+      resultId:null,
+      history:[],
+      clientBets:{},
+      updatedAt:Date.now(),
+      creator:ONLINE.clientId
+    };
+  }
+  s.history=Array.isArray(s.history)?s.history.slice(-120):[];
+  s.clientBets=cleanClientBets(s.clientBets);
+  s.phase=s.phase==='dealing'?'dealing':'betting';
+  s.roundNo=Math.max(0,Number(s.roundNo||0));
+  if(!Number(s.deadline))s.deadline=Date.now()+ROUND_SECONDS*1000;
+  return s;
+}
+async function restGetLive(){
+  const r=await fetch(liveBaseUrl()+'?t='+Date.now(),{cache:'no-store'});
+  if(!r.ok)throw new Error('GET '+r.status+' '+(await r.text()).slice(0,120));
+  return r.json();
+}
+async function restGetLiveEtag(){
+  const r=await fetch(liveBaseUrl()+'?t='+Date.now(),{cache:'no-store',headers:{'X-Firebase-ETag':'true'}});
+  if(!r.ok)throw new Error('GET_ETAG '+r.status+' '+(await r.text()).slice(0,120));
+  return {value:await r.json(), etag:r.headers.get('ETag')||r.headers.get('etag')||''};
+}
+async function restPutLive(obj){
+  const r=await fetch(liveBaseUrl(),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(obj)});
+  if(!r.ok)throw new Error('PUT '+r.status+' '+(await r.text()).slice(0,160));
+  return r.json();
+}
+async function restPutLiveCAS(obj, etag){
+  if(!etag)return {committed:true,value:await restPutLive(obj)};
+  const r=await fetch(liveBaseUrl(),{method:'PUT',headers:{'Content-Type':'application/json','if-match':etag},body:JSON.stringify(obj)});
+  if(r.status===412)return {committed:false,value:null};
+  if(!r.ok)throw new Error('PUT_CAS '+r.status+' '+(await r.text()).slice(0,160));
+  return {committed:true,value:await r.json()};
+}
+async function restPutMyBets(payload){
+  const r=await fetch(myBetsUrl(),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  if(!r.ok)throw new Error('PUT_BETS '+r.status+' '+(await r.text()).slice(0,160));
+  return r.json();
+}
 async function syncOnlineBets(){
   if(!ONLINE.enabled||!ONLINE.ready)return;
-  const payload={clientId:ONLINE.clientId,roundKey:currentBetRoundKey(),bets:clonePlainBets(bets),updatedAt:Date.now()};
+  const payload={clientId:ONLINE.clientId,roundKey:currentBetRoundKey(),roundNo:currentBetRoundNo(),bets:clonePlainBets(bets),updatedAt:Date.now()};
   const hasAny=betTotal(payload.bets)>0;
-  if(ONLINE.mode==='rest'){
-    try{
-      await restPutMyBets(hasAny?payload:null);
-      if(!ONLINE.remoteBets||typeof ONLINE.remoteBets!=='object')ONLINE.remoteBets={};
-      if(hasAny)ONLINE.remoteBets[ONLINE.clientId]=payload;else delete ONLINE.remoteBets[ONLINE.clientId];
-      if(ONLINE.state){ONLINE.state.clientBets=ONLINE.remoteBets}
-      updateBetsDisplay();
-    }catch(e){diag('REST下注同步失败：'+(e.message||e),'err')}
-    return;
-  }
-  if(ONLINE.myBetRef){
-    try{
-      ONLINE.myBetRef.set(hasAny?payload:null);
-      if(!ONLINE.remoteBets||typeof ONLINE.remoteBets!=='object')ONLINE.remoteBets={};
-      if(hasAny)ONLINE.remoteBets[ONLINE.clientId]=payload;else delete ONLINE.remoteBets[ONLINE.clientId];
-      if(ONLINE.state){ONLINE.state.clientBets=ONLINE.remoteBets}
-      updateBetsDisplay();
-    }catch(e){diag('SDK下注同步失败：'+(e.message||e),'err')}
+  try{
+    await restPutMyBets(hasAny?payload:null);
+    if(!ONLINE.remoteBets||typeof ONLINE.remoteBets!=='object')ONLINE.remoteBets={};
+    if(hasAny)ONLINE.remoteBets[ONLINE.clientId]=payload;else delete ONLINE.remoteBets[ONLINE.clientId];
+    if(ONLINE.state)ONLINE.state.clientBets=ONLINE.remoteBets;
+    updateBetsDisplay();
+  }catch(e){
+    diag('下注同步失败：'+(e.message||e),'err');
   }
 }
+function applyOnlineState(s){
+  s=normalizeRoomState(s);
+  ONLINE.state=s;
+  ONLINE.deadline=Number(s.deadline||0);
+  ONLINE.remoteBets=cleanClientBets(s.clientBets);
+  setOnlineStatus('联机中','on');
+  setRoomLabel();
+  updateBetsDisplay();
 
-function diag(msg, cls=''){
-  if(!netDiag)return;
-  netDiag.textContent='联机诊断：'+msg;
-  netDiag.classList.remove('ok','err');
-  if(cls)netDiag.classList.add(cls);
-}
-window.addEventListener('error',e=>{diag('JS错误：'+(e.message||'未知错误'),'err')});
-window.addEventListener('unhandledrejection',e=>{diag('Promise错误：'+((e.reason&&e.reason.message)||e.reason||'未知错误'),'err')});
-function hasFirebaseConfig(){
-  const c=window.BACCARAT_FIREBASE_CONFIG;
-  return !!(c && c.apiKey && c.databaseURL && !String(c.apiKey).includes('填写') && !String(c.databaseURL).includes('填写'));
-}
-function cleanResult(r){
-  return {
-    p:(r.p||[]).map(c=>({r:c.r,s:c.s})),b:(r.b||[]).map(c=>({r:c.r,s:c.s})),
-    pt:Number(r.pt)||0,bt:Number(r.bt)||0,winner:r.winner||'TIE',
-    pPair:!!r.pPair,bPair:!!r.bPair
-  };
-}
-function restoreMissFromHistory(){
-  miss={PLAYER:0,BANKER:0,TIE:0,PLAYER_PAIR:0,BANKER_PAIR:0,LUCKY7:0,SUPER7:0,LUCKY6:0};
-  for(const r of history){
-    for(const k of Object.keys(miss)) miss[k]++;
-    miss[r.winner]=0;
-    if(r.pPair)miss.PLAYER_PAIR=0;
-    if(r.bPair)miss.BANKER_PAIR=0;
-    if(r.winner==='PLAYER'&&r.pt===7)miss.LUCKY7=0;
-    if(r.winner==='BANKER'&&r.bt===6)miss.LUCKY6=0;
-    if(r.winner==='PLAYER'&&r.pt===7&&r.bt===6)miss.SUPER7=0;
+  if(Array.isArray(s.history))applyRemoteHistory(s.history);
+
+  if(s.phase==='betting'){
+    if(!dealing){
+      setLocked(false);
+      startOnlineTimer();
+    }
+  }else if(s.phase==='dealing' && s.result && Number(s.resultId)!==Number(ONLINE.lastAnimated)){
+    ONLINE.lastAnimated=Number(s.resultId);
+    const r=cleanResult(s.result);
+    r.onlineResultId=Number(s.resultId);
+    playRound(r,{online:true,roundNo:Number(s.roundNo)||Number(s.resultId)||roundNo+1});
   }
-  document.querySelectorAll('[data-miss]').forEach(el=>{const k=el.dataset.miss;el.textContent=(miss[k]||0)+'局未出'});
-}
-function applyRemoteHistory(list){
-  const next=Array.isArray(list)?list.map(cleanResult).slice(-120):[];
-  const rev=next.length+':'+(next.length?JSON.stringify(next[next.length-1]):'empty');
-  if(rev===ONLINE.historyRev || dealing)return;
-  ONLINE.historyRev=rev;history=next;roundNo=Number((ONLINE.state&&ONLINE.state.roundNo)||history.length)||history.length;
-  restoreMissFromHistory();renderRoads();updateHeader();
 }
 function startOnlineTimer(){
   clearInterval(ticking);
   const tick=()=>{
-    if(dealing)return;
-    const left=Math.max(0,Math.ceil(((ONLINE.deadline||serverNow()+ROUND_SECONDS*1000)-serverNow())/1000));
+    if(!ONLINE.enabled||dealing)return;
+    const left=Math.max(0,Math.ceil(((ONLINE.deadline||Date.now()+ROUND_SECONDS*1000)-Date.now())/1000));
     clockEl.textContent=left;
-    if(left<=0){clearInterval(ticking);tryOnlineDeal()}
+    if(left<=0){
+      clearInterval(ticking);
+      tryOnlineDeal();
+    }
   };
-  tick();ticking=setInterval(tick,250);
+  tick();
+  ticking=setInterval(tick,250);
 }
 async function tryOnlineDeal(){
   if(!ONLINE.enabled||dealing)return;
-  const proposed=cleanResult(calcRound());
-  const now=serverNow();
-  if(ONLINE.mode==='rest'){
-    try{
-      const s=await restGet()||{};
-      if(s.phase!=='betting'){startTimer();return}
-      const deadline=Number(s.deadline||0);
-      if(deadline && now<deadline-350){startTimer();return}
-      const nextRound=Number(s.roundNo||0)+1;
-      await restPut(Object.assign({},s,{phase:'dealing',roundNo:nextRound,resultId:nextRound,result:proposed,dealStartAt:now,updatedAt:Date.now(),dealerClient:ONLINE.clientId}));
-      diag('REST写入开奖结果成功','ok');
-    }catch(e){setOnlineStatus('REST异常','off');diag('REST写入失败：'+(e.message||e),'err');startTimer()}
-    return;
-  }
-  if(!ONLINE.ref)return;
-  ONLINE.ref.transaction(s=>{
-    s=s||{};
-    if(s.phase!=='betting')return s;
+  try{
+    const {value,etag}=await restGetLiveEtag();
+    let s=normalizeRoomState(value);
+    if(s.phase!=='betting'){applyOnlineState(s);return}
     const deadline=Number(s.deadline||0);
-    if(deadline && now<deadline-350)return s;
+    if(deadline && Date.now()<deadline-250){applyOnlineState(s);return}
     const nextRound=Number(s.roundNo||0)+1;
-    return Object.assign({},s,{phase:'dealing',roundNo:nextRound,resultId:nextRound,result:proposed,dealStartAt:now,updatedAt:firebase.database.ServerValue.TIMESTAMP,dealerClient:ONLINE.clientId});
-  },(err,committed)=>{if(err){setOnlineStatus('联机异常','off');diag('SDK交易失败：'+(err.message||err),'err');toast('联机异常，已保持等待')}else if(!committed){startTimer()}else{diag('SDK写入开奖结果成功','ok')}});
+    const proposed=cleanResult(calcRound());
+    const nextState=Object.assign({},s,{
+      version:SYNC_VERSION,
+      phase:'dealing',
+      roundNo:nextRound,
+      resultId:nextRound,
+      result:proposed,
+      dealStartAt:Date.now(),
+      updatedAt:Date.now(),
+      dealerClient:ONLINE.clientId
+    });
+    const res=await restPutLiveCAS(nextState,etag);
+    if(res.committed){
+      diag('写入开奖结果成功｜REST稳定同步','ok');
+      applyOnlineState(nextState);
+    }else{
+      diag('已有其他玩家写入本局，正在同步','ok');
+      const latest=await restGetLive();
+      applyOnlineState(latest);
+    }
+  }catch(e){
+    setOnlineStatus('联机异常','off');
+    diag('开奖结果写入失败：'+(e.message||e),'err');
+    setTimeout(startOnlineTimer,900);
+  }
 }
 async function finishOnlineRound(r){
   if(!ONLINE.enabled||!r.onlineResultId)return;
-  const resultId=r.onlineResultId;
+  const resultId=Number(r.onlineResultId);
   const clean=cleanResult(r);
-  if(ONLINE.mode==='rest'){
-    try{
-      const s=await restGet()||{};
-      if(s.phase!=='dealing'||Number(s.resultId)!==Number(resultId))return;
-      const h=(Array.isArray(s.history)?s.history:[]).map(cleanResult);
-      const already=h.length && JSON.stringify(h[h.length-1])===JSON.stringify(clean);
-      const nextHistory=(already?h:h.concat([clean])).slice(-120);
-      await restPut(Object.assign({},s,{phase:'betting',deadline:serverNow()+ROUND_SECONDS*1000,history:nextHistory,result:null,resultId:null,dealStartAt:null,updatedAt:Date.now()}));
-      diag('REST完成本局，等待下一轮','ok');
-    }catch(e){diag('REST结算写入失败：'+(e.message||e),'err')}
-    return;
-  }
-  if(!ONLINE.ref)return;
-  ONLINE.ref.transaction(s=>{
-    s=s||{};
-    if(s.phase!=='dealing'||Number(s.resultId)!==Number(resultId))return s;
+  try{
+    const {value,etag}=await restGetLiveEtag();
+    let s=normalizeRoomState(value);
+    if(s.phase!=='dealing'||Number(s.resultId)!==resultId){
+      applyOnlineState(s);
+      return;
+    }
     const h=(Array.isArray(s.history)?s.history:[]).map(cleanResult);
     const already=h.length && JSON.stringify(h[h.length-1])===JSON.stringify(clean);
     const nextHistory=(already?h:h.concat([clean])).slice(-120);
-    return Object.assign({},s,{phase:'betting',deadline:serverNow()+ROUND_SECONDS*1000,history:nextHistory,result:null,resultId:null,dealStartAt:null,updatedAt:firebase.database.ServerValue.TIMESTAMP});
-  },(err)=>{if(err)diag('SDK结算写入失败：'+(err.message||err),'err')});
-}
-function applyOnlineState(s){
-  if(!s)return;
-  ONLINE.state=s;ONLINE.deadline=Number(s.deadline||0);
-  if(s.clientBets)applyRemoteBetState(s.clientBets);
-  const nextBetKey=currentBetRoundKey();
-  if(ONLINE.betRev!==nextBetKey){ONLINE.betRev=nextBetKey;updateBetsDisplay();setTimeout(syncOnlineBets,60)}
-  setOnlineStatus('联机中','on');setRoomLabel();
-  if(Array.isArray(s.history))applyRemoteHistory(s.history);
-  if(s.phase==='betting'){
-    if(!dealing){setLocked(false);startTimer()}
-  }else if(s.phase==='dealing' && s.result && Number(s.resultId)!==Number(ONLINE.lastAnimated)){
-    ONLINE.lastAnimated=Number(s.resultId);
-    const r=cleanResult(s.result);r.onlineResultId=Number(s.resultId);
-    playRound(r,{online:true,roundNo:Number(s.roundNo)||Number(s.resultId)||roundNo+1});
+    const nextState=Object.assign({},s,{
+      version:SYNC_VERSION,
+      phase:'betting',
+      deadline:Date.now()+ROUND_SECONDS*1000,
+      history:nextHistory,
+      result:null,
+      resultId:null,
+      dealStartAt:null,
+      clientBets:{},
+      updatedAt:Date.now()
+    });
+    const res=await restPutLiveCAS(nextState,etag);
+    if(res.committed){
+      diag('本局完成，下一轮已同步开启','ok');
+      ONLINE.remoteBets={};
+      applyOnlineState(nextState);
+    }else{
+      const latest=await restGetLive();
+      applyOnlineState(latest);
+    }
+  }catch(e){
+    diag('本局完成写入失败：'+(e.message||e),'err');
+    setTimeout(async()=>{try{applyOnlineState(await restGetLive())}catch(_){startOnlineTimer()}},900);
   }
 }
-function dbBase(){return String((window.BACCARAT_FIREBASE_CONFIG&&window.BACCARAT_FIREBASE_CONFIG.databaseURL)||'').replace(/\/$/,'')}
-function restUrl(){return dbBase()+'/rooms/'+encodeURIComponent(ONLINE.roomId)+'.json'}
-async function restGet(){const r=await fetch(restUrl()+'?t='+Date.now(),{cache:'no-store'});if(!r.ok)throw new Error('GET '+r.status+' '+(await r.text()).slice(0,120));return r.json()}
-async function restPut(obj){const r=await fetch(restUrl(),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(obj)});if(!r.ok)throw new Error('PUT '+r.status+' '+(await r.text()).slice(0,160));return r.json()}
-async function initRestOnline(reason){
-  if(!hasFirebaseConfig()){setOnlineStatus('单机','off');diag('没有 Firebase 配置','err');return false}
-  ONLINE.enabled=true;ONLINE.ready=true;ONLINE.mode='rest';ONLINE.restUrl=restUrl();ONLINE.offset=0;
-  setOnlineStatus('REST连接','on');diag('SDK不可用，启用REST联机：'+(reason||''));
+async function initRestStableOnline(reason){
+  if(!hasFirebaseConfig()){
+    setOnlineStatus('单机','off');
+    diag('firebase-config 未加载或 databaseURL 缺失','err');
+    return false;
+  }
+  ONLINE.enabled=true;
+  ONLINE.ready=true;
+  ONLINE.mode='restV5';
+  ONLINE.restUrl=liveBaseUrl();
+  setOnlineStatus('联机中','on');
+  diag('REST稳定联机启动｜写入 rooms/'+ONLINE.roomId+'/'+LIVE_NODE,'ok');
   try{
-    let s=await restGet();
-    if(!s){
-      s={phase:'betting',roundNo:0,deadline:Date.now()+ROUND_SECONDS*1000,history:[],createdAt:Date.now(),updatedAt:Date.now(),creator:ONLINE.clientId};
-      await restPut(s);
-      diag('REST创建房间成功','ok');
-    }else{diag('REST读取房间成功','ok')}
+    const {value,etag}=await restGetLiveEtag();
+    let s=normalizeRoomState(value);
+    if(!value || (value&&value.version!==SYNC_VERSION)){
+      const res=await restPutLiveCAS(s,etag);
+      if(!res.committed){
+        s=normalizeRoomState(await restGetLive());
+      }
+    }
     applyOnlineState(s);
-    try{const betState=await restGetBets();applyRemoteBetState(betState);if(ONLINE.state)ONLINE.state.clientBets=betState||{}}catch(e){diag('REST下注读取失败：'+(e.message||e),'err')}
     clearInterval(ONLINE.restTimer);
-    ONLINE.restTimer=setInterval(async()=>{try{const [n,bv]=await Promise.all([restGet(),restGetBets().catch(()=>null)]);if(n){if(bv)n.clientBets=bv;applyOnlineState(n)}else if(bv){applyRemoteBetState(bv)}}catch(e){diag('REST读取失败：'+(e.message||e),'err')}},800);
+    ONLINE.restTimer=setInterval(async()=>{
+      try{
+        const n=await restGetLive();
+        applyOnlineState(n);
+      }catch(e){
+        diag('REST读取失败：'+(e.message||e),'err');
+      }
+    },650);
+    setTimeout(syncOnlineBets,200);
     return true;
-  }catch(e){ONLINE.enabled=false;setOnlineStatus('联机失败','off');diag('REST联机失败：'+(e.message||e),'err');return false}
+  }catch(e){
+    ONLINE.enabled=false;
+    setOnlineStatus('联机失败','off');
+    diag('REST联机失败：'+(e.message||e),'err');
+    return false;
+  }
 }
 function initOnline(){
   setRoomLabel();
-  if(roomBtn){addEvt(roomBtn,()=>{const v=prompt('输入房间号，例如 VIP001',ONLINE.roomId);if(!v)return;const id=v.trim().toUpperCase().replace(/[^A-Z0-9_-]/g,'').slice(0,24);if(!id){toast('房间号无效');return}localStorage.setItem(ONLINE_ROOM_KEY,id);const u=new URL(location.href);u.searchParams.set('room',id);location.href=u.toString()})}
-  if(!hasFirebaseConfig()){setOnlineStatus('单机','off');diag('firebase-config 未加载或 databaseURL 缺失','err');return false}
-  diag('配置已加载，准备连接 Firebase｜下注同步写入 rooms/'+ONLINE.roomId+'/clientBets');
-  try{
-    if(!window.firebase||!firebase.initializeApp||!firebase.database){
-      setOnlineStatus('SDK未加载','off');
-      setTimeout(()=>initRestOnline('Firebase SDK 未加载'),100);
-      return true;
-    }
-    if(!firebase.apps.length)firebase.initializeApp(window.BACCARAT_FIREBASE_CONFIG);
-    ONLINE.db=firebase.database();ONLINE.ref=ONLINE.db.ref('rooms/'+ONLINE.roomId);ONLINE.betRootRef=ONLINE.ref.child('clientBets');ONLINE.myBetRef=ONLINE.betRootRef.child(ONLINE.clientId);ONLINE.enabled=true;ONLINE.ready=true;ONLINE.mode='sdk';
-    ONLINE.db.ref('.info/serverTimeOffset').on('value',snap=>{ONLINE.offset=Number(snap.val()||0)});
-    ONLINE.ref.transaction(s=>s||{phase:'betting',roundNo:0,deadline:serverNow()+ROUND_SECONDS*1000,history:[],createdAt:firebase.database.ServerValue.TIMESTAMP,updatedAt:firebase.database.ServerValue.TIMESTAMP,creator:ONLINE.clientId},(err,committed,snap)=>{
-      if(err){setOnlineStatus('写入失败','off');diag('SDK创建房间失败：'+(err.message||err),'err');initRestOnline('SDK写入失败');return}
-      diag(committed?'SDK创建/读取房间成功':'SDK房间已存在','ok');
-      const v=snap&&snap.val&&snap.val(); if(v)applyOnlineState(v);
+  if(roomBtn){
+    addEvt(roomBtn,()=>{
+      const v=prompt('输入房间号，例如 VIP001',ONLINE.roomId);
+      if(!v)return;
+      const id=v.trim().toUpperCase().replace(/[^A-Z0-9_-]/g,'').slice(0,24);
+      if(!id){toast('房间号无效');return}
+      localStorage.setItem(ONLINE_ROOM_KEY,id);
+      const u=new URL(location.href);
+      u.searchParams.set('room',id);
+      location.href=u.toString();
     });
-    ONLINE.ref.on('value',snap=>{const v=snap.val(); if(v){applyOnlineState(v);diag('SDK实时同步中｜下注同步已开启','ok')}else{diag('SDK读取为空，等待创建房间')}});
-    ONLINE.betRootRef.on('value',snap=>{const v=snap.val()||{};ONLINE.remoteBets=v;if(ONLINE.state)ONLINE.state.clientBets=v;updateBetsDisplay()});
-    setTimeout(syncOnlineBets,200);
-    setOnlineStatus('连接中','on');return true;
-  }catch(e){console.error(e);setOnlineStatus('联机失败','off');diag('SDK初始化异常：'+(e.message||e),'err');setTimeout(()=>initRestOnline('SDK异常'),100);return true}
+  }
+  return initRestStableOnline('force REST');
 }
+
 function betTotal(obj=bets){return Object.values(obj).reduce((s,v)=>s+Number(v||0),0)}
 function updateBetsDisplay(){const shown=ONLINE.enabled?aggregateRoomBets():bets;const p=shown.PLAYER||0,b=shown.BANKER||0,t=shown.TIE||0;document.getElementById('pAmt').textContent=fmt(p);document.getElementById('bAmt').textContent=fmt(b);for(const el of document.querySelectorAll('.betAmt')){const k=(el.id||'').replace(/^amt_/,'');el.textContent=fmt(shown[k]||0)}const sum=betTotal(shown);document.getElementById('pPct').textContent=sum?Math.round(p/sum*100)+'%':'0%';document.getElementById('bPct').textContent=sum?Math.round(b/sum*100)+'%':'0%';document.getElementById('tPct').textContent=sum?Math.round(t/sum*100)+'%':'0%'}
 function clearBetChips(refund=false){if(refund){const back=betTotal(bets);if(back>0){bankroll+=back;updateBalance();}}document.querySelectorAll('.stackChip').forEach(x=>x.remove());bets={};stackIndex=0;updateBetsDisplay();syncOnlineBets()}
