@@ -1,10 +1,14 @@
-# DB截图风格联机百家乐源码
+# OVO VIP 联机同步版
 
-这版只按照你最后发的截图重做页面：顶部局号/圆形倒计时/限红、发牌区、副玩法、正玩法、筹码栏、开牌结果条、路单区。
+上传方式：把本文件夹里的 index.html、firebase-config.js、firebase-rules-demo.json 上传到 GitHub 仓库根目录，覆盖旧文件。
 
-保留联机功能：倒计时同步、自动开牌、开奖结果同步、路单同步、下注数字同步、本机筹码飞行动画。
+打开测试：
+https://hh8658420-crypto.github.io/ovo/?v=vip-sync-ui-1&room=VIP001
 
-上传：解压后把全部文件上传到 GitHub 仓库根目录并覆盖旧文件。
+本版修复：
+- 每个页面会话使用独立玩家 ID，同一手机/同一浏览器开两个页面测试也不会互相覆盖下注。
+- 下注数字走 rooms/{房间}/clientBets/{玩家会话ID} 实时同步。
+- 开奖/倒计时/开奖记录走 rooms/{房间}/state 实时同步。
+- 页面样式改成接近 baccarat-vip final 的移动端布局。
 
-测试链接示例：
-https://hh8658420-crypto.github.io/ovo/?v=db-exact-style-1&room=VIP001
+注意：这是前端模拟游戏，不含真钱支付。
