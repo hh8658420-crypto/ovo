@@ -181,7 +181,7 @@ body{display:flex;justify-content:center;align-items:stretch;background:#090909}
   min-width:100%!important;min-height:100%!important;
   width:100%!important;height:100%!important;
   object-fit:cover!important;
-  object-position:50% 42%!important;
+  object-position:50% 56%!important;
   opacity:0!important;
   transition:opacity .35s ease!important;
   filter:saturate(1.08) brightness(1.06) contrast(1.02)!important;
@@ -189,7 +189,7 @@ body{display:flex;justify-content:center;align-items:stretch;background:#090909}
 }
 .dealer-video-ready #dealerVideo{opacity:1!important;}
 .videoStatus,.videoHud{display:none!important;}
-@media (max-height:720px){#dealerVideo{object-position:50% 39%!important;}}
+@media (max-height:720px){#dealerVideo{object-position:50% 54%!important;}}
 
 
 /* 兑换码本金系统 */
@@ -373,7 +373,7 @@ const ROUND_SECONDS = 15;
 const ONLINE_ROOM_KEY='baccarat_online_room_v1';
 function roomFromUrl(){try{return (new URL(location.href)).searchParams.get('room')||''}catch(e){return ''}}
 let DEFAULT_ROOM=(roomFromUrl()||localStorage.getItem(ONLINE_ROOM_KEY)||window.BACCARAT_ROOM_ID||'VIP001').trim().toUpperCase().replace(/[^A-Z0-9_-]/g,'').slice(0,24)||'VIP001';
-const ONLINE={enabled:false,ready:false,mode:'',roomId:DEFAULT_ROOM,db:null,ref:null,state:null,deadline:0,offset:0,lastAnimated:null,historyRev:'',restUrl:'',restTimer:null,clientId:(localStorage.getItem('baccarat_client_id')||('c'+Date.now()+Math.random().toString(16).slice(2)))};localStorage.setItem('baccarat_client_id',ONLINE.clientId);
+const ONLINE={enabled:false,ready:false,mode:'',roomId:DEFAULT_ROOM,db:null,ref:null,betRootRef:null,myBetRef:null,state:null,deadline:0,offset:0,lastAnimated:null,historyRev:'',restUrl:'',restTimer:null,remoteBets:{},betRev:'',clientId:(localStorage.getItem('baccarat_client_id')||('c'+Date.now()+Math.random().toString(16).slice(2)))};localStorage.setItem('baccarat_client_id',ONLINE.clientId);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /* ===== 声音系统已取消：全部声音函数改为空函数，避免加载任何音频资源 ===== */
@@ -457,6 +457,15 @@ function setOnlineStatus(text, cls='off'){
   onlineStatus.classList.add(cls);
 }
 function setRoomLabel(){if(roomBtn)roomBtn.textContent='房间 '+ONLINE.roomId}
+function currentBetRoundKey(){const s=ONLINE.state||{};const base=Math.max(0,Number(s.roundNo||roundNo||0));return 'R'+(s.phase==='dealing'?base:base+1)}
+function clonePlainBets(obj){const out={};for(const [k,v] of Object.entries(obj||{})){const n=Math.max(0,Math.round(Number(v||0)));if(n>0)out[k]=n}return out}
+function roomBetsUrl(){return dbBase()+'/roomBets/'+encodeURIComponent(ONLINE.roomId)+'.json'}
+function myBetsUrl(){return dbBase()+'/roomBets/'+encodeURIComponent(ONLINE.roomId)+'/'+encodeURIComponent(ONLINE.clientId)+'.json'}
+function applyRemoteBetState(v){ONLINE.remoteBets=(v&&typeof v==='object')?v:{};updateBetsDisplay()}
+function aggregateRoomBets(){const source=ONLINE.enabled?(ONLINE.remoteBets||{}):{};const key=currentBetRoundKey();const total={PLAYER:0,BANKER:0,TIE:0,PLAYER_PAIR:0,BANKER_PAIR:0,LUCKY7:0,LUCKY6:0,SUPER7:0};for(const item of Object.values(source)){if(!item||item.roundKey!==key)continue;const map=(item.bets&&typeof item.bets==='object')?item.bets:item;for(const [k,v] of Object.entries(map)){if(Object.prototype.hasOwnProperty.call(total,k))total[k]+=Math.max(0,Math.round(Number(v||0)))}}return total}
+async function restGetBets(){const r=await fetch(roomBetsUrl()+'?t='+Date.now(),{cache:'no-store'});if(!r.ok)throw new Error('GETBETS '+r.status+' '+(await r.text()).slice(0,120));return r.json()}
+async function restPutMyBets(payload){const r=await fetch(myBetsUrl(),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(!r.ok)throw new Error('PUTBETS '+r.status+' '+(await r.text()).slice(0,160));return r.json()}
+async function syncOnlineBets(){if(!ONLINE.enabled||!ONLINE.ready)return;const payload={clientId:ONLINE.clientId,roundKey:currentBetRoundKey(),bets:clonePlainBets(bets),updatedAt:Date.now()};const hasAny=betTotal(payload.bets)>0;if(ONLINE.mode==='rest'){try{await restPutMyBets(hasAny?payload:null);if(!ONLINE.remoteBets||typeof ONLINE.remoteBets!=='object')ONLINE.remoteBets={};if(hasAny)ONLINE.remoteBets[ONLINE.clientId]=payload;else delete ONLINE.remoteBets[ONLINE.clientId];updateBetsDisplay()}catch(e){diag('REST下注同步失败：'+(e.message||e),'err')}return}if(ONLINE.myBetRef){try{ONLINE.myBetRef.set(hasAny?payload:null);if(!ONLINE.remoteBets||typeof ONLINE.remoteBets!=='object')ONLINE.remoteBets={};if(hasAny)ONLINE.remoteBets[ONLINE.clientId]=payload;else delete ONLINE.remoteBets[ONLINE.clientId];updateBetsDisplay()}catch(e){diag('SDK下注同步失败：'+(e.message||e),'err')}}}
 
 function diag(msg, cls=''){
   if(!netDiag)return;
@@ -562,6 +571,8 @@ async function finishOnlineRound(r){
 function applyOnlineState(s){
   if(!s)return;
   ONLINE.state=s;ONLINE.deadline=Number(s.deadline||0);
+  const nextBetKey=currentBetRoundKey();
+  if(ONLINE.betRev!==nextBetKey){ONLINE.betRev=nextBetKey;updateBetsDisplay();if(!betTotal(bets))setTimeout(syncOnlineBets,60)}
   setOnlineStatus('联机中','on');setRoomLabel();
   if(Array.isArray(s.history))applyRemoteHistory(s.history);
   if(s.phase==='betting'){
@@ -588,8 +599,9 @@ async function initRestOnline(reason){
       diag('REST创建房间成功','ok');
     }else{diag('REST读取房间成功','ok')}
     applyOnlineState(s);
+    try{const betState=await restGetBets();applyRemoteBetState(betState)}catch(e){diag('REST下注读取失败：'+(e.message||e),'err')}
     clearInterval(ONLINE.restTimer);
-    ONLINE.restTimer=setInterval(async()=>{try{const n=await restGet();if(n)applyOnlineState(n)}catch(e){diag('REST读取失败：'+(e.message||e),'err')}},900);
+    ONLINE.restTimer=setInterval(async()=>{try{const [n,bv]=await Promise.all([restGet(),restGetBets().catch(()=>null)]);if(n)applyOnlineState(n);if(bv)applyRemoteBetState(bv)}catch(e){diag('REST读取失败：'+(e.message||e),'err')}},900);
     return true;
   }catch(e){ONLINE.enabled=false;setOnlineStatus('联机失败','off');diag('REST联机失败：'+(e.message||e),'err');return false}
 }
@@ -605,7 +617,7 @@ function initOnline(){
       return true;
     }
     if(!firebase.apps.length)firebase.initializeApp(window.BACCARAT_FIREBASE_CONFIG);
-    ONLINE.db=firebase.database();ONLINE.ref=ONLINE.db.ref('rooms/'+ONLINE.roomId);ONLINE.enabled=true;ONLINE.ready=true;ONLINE.mode='sdk';
+    ONLINE.db=firebase.database();ONLINE.ref=ONLINE.db.ref('rooms/'+ONLINE.roomId);ONLINE.betRootRef=ONLINE.db.ref('roomBets/'+ONLINE.roomId);ONLINE.myBetRef=ONLINE.db.ref('roomBets/'+ONLINE.roomId+'/'+ONLINE.clientId);ONLINE.enabled=true;ONLINE.ready=true;ONLINE.mode='sdk';
     ONLINE.db.ref('.info/serverTimeOffset').on('value',snap=>{ONLINE.offset=Number(snap.val()||0)});
     ONLINE.ref.transaction(s=>s||{phase:'betting',roundNo:0,deadline:serverNow()+ROUND_SECONDS*1000,history:[],createdAt:firebase.database.ServerValue.TIMESTAMP,updatedAt:firebase.database.ServerValue.TIMESTAMP,creator:ONLINE.clientId},(err,committed,snap)=>{
       if(err){setOnlineStatus('写入失败','off');diag('SDK创建房间失败：'+(err.message||err),'err');initRestOnline('SDK写入失败');return}
@@ -613,18 +625,20 @@ function initOnline(){
       const v=snap&&snap.val&&snap.val(); if(v)applyOnlineState(v);
     });
     ONLINE.ref.on('value',snap=>{const v=snap.val(); if(v){applyOnlineState(v);diag('SDK实时同步中','ok')}else{diag('SDK读取为空，等待创建房间')}});
+    ONLINE.betRootRef.on('value',snap=>{applyRemoteBetState(snap.val()||{})});
+    setTimeout(syncOnlineBets,200);
     setOnlineStatus('连接中','on');return true;
   }catch(e){console.error(e);setOnlineStatus('联机失败','off');diag('SDK初始化异常：'+(e.message||e),'err');setTimeout(()=>initRestOnline('SDK异常'),100);return true}
 }
 function betTotal(obj=bets){return Object.values(obj).reduce((s,v)=>s+Number(v||0),0)}
-function updateBetsDisplay(){const p=bets.PLAYER||0,b=bets.BANKER||0,t=bets.TIE||0;document.getElementById('pAmt').textContent=fmt(p);document.getElementById('bAmt').textContent=fmt(b);const sum=betTotal(bets);document.getElementById('pPct').textContent=sum?Math.round(p/sum*100)+'%':'0%';document.getElementById('bPct').textContent=sum?Math.round(b/sum*100)+'%':'0%';document.getElementById('tPct').textContent=sum?Math.round(t/sum*100)+'%':'0%'}
-function clearBetChips(refund=false){if(refund){const back=betTotal(bets);if(back>0){bankroll+=back;updateBalance();}}document.querySelectorAll('.stackChip').forEach(x=>x.remove());bets={};stackIndex=0;updateBetsDisplay()}
+function updateBetsDisplay(){const shown=ONLINE.enabled?aggregateRoomBets():bets;const p=shown.PLAYER||0,b=shown.BANKER||0,t=shown.TIE||0;document.getElementById('pAmt').textContent=fmt(p);document.getElementById('bAmt').textContent=fmt(b);const sum=betTotal(shown);document.getElementById('pPct').textContent=sum?Math.round(p/sum*100)+'%':'0%';document.getElementById('bPct').textContent=sum?Math.round(b/sum*100)+'%':'0%';document.getElementById('tPct').textContent=sum?Math.round(t/sum*100)+'%':'0%'}
+function clearBetChips(refund=false){if(refund){const back=betTotal(bets);if(back>0){bankroll+=back;updateBalance();}}document.querySelectorAll('.stackChip').forEach(x=>x.remove());bets={};stackIndex=0;updateBetsDisplay();syncOnlineBets()}
 function flyChip(fromEl, toEl, value){const fr=fromEl.getBoundingClientRect(), tr=toEl.getBoundingClientRect();const appR=app.getBoundingClientRect();const x=fr.left+fr.width/2-16, y=fr.top+fr.height/2-16;const tx=tr.left+tr.width*(.38+Math.random()*.24)-16, ty=tr.top+tr.height*(.42+Math.random()*.24)-16;const f=document.createElement('div');f.className='floatChip '+chipClass(value);f.textContent=fmt(value);f.style.left=x+'px';f.style.top=y+'px';document.body.appendChild(f);requestAnimationFrame(()=>{f.classList.add('fly');f.style.transform=`translate(${tx-x}px,${ty-y}px) scale(.78)`});setTimeout(()=>{f.remove();const s=document.createElement('div');s.className='stackChip '+chipClass(value);s.textContent=fmt(value);const localX=tx-appR.left-board.getBoundingClientRect().left+appR.left;const localY=ty-board.getBoundingClientRect().top;s.style.left=Math.max(8,Math.min(toEl.clientWidth-40, tx-tr.left))+'px';s.style.top=Math.max(8,Math.min(toEl.clientHeight-40, ty-tr.top))+'px';s.style.transform=`translate(${(stackIndex%5)*3}px,${Math.floor(stackIndex/5)*-2}px) scale(.9)`;toEl.appendChild(s);stackIndex++},330)}
-function placeBet(box){if(dealing)return;const k=box.dataset.bet;if((bets[k]||0)+selectedValue>AREA_MAX){toast('单门限红 20万');return}if(bankroll<selectedValue){toast(bankroll<=0?'请先输入兑换码兑换本金':'模拟本金不足');return}bankroll-=selectedValue;updateBalance();bets[k]=(bets[k]||0)+selectedValue;playChipSound();flyChip(selectedChip,box,selectedValue);updateBetsDisplay()}
+function placeBet(box){if(dealing)return;const k=box.dataset.bet;if((bets[k]||0)+selectedValue>AREA_MAX){toast('单门限红 20万');return}if(bankroll<selectedValue){toast(bankroll<=0?'请先输入兑换码兑换本金':'模拟本金不足');return}bankroll-=selectedValue;updateBalance();bets[k]=(bets[k]||0)+selectedValue;playChipSound();flyChip(selectedChip,box,selectedValue);updateBetsDisplay();syncOnlineBets()}
 chips.forEach(ch=>addEvt(ch,()=>{chips.forEach(c=>c.classList.remove('selected'));ch.classList.add('selected');selectedChip=ch;selectedValue=Number(ch.dataset.value)}));
 betBoxes.forEach(b=>addEvt(b,()=>placeBet(b)));
 addEvt(clearBtn,()=>{if(dealing)return;clearBetChips(true)});
-addEvt(repeatBtn,()=>{if(dealing)return;if(!Object.keys(lastBets).length){toast('暂无上一局下注');return}if(Object.values(lastBets).some(v=>v>AREA_MAX)){toast('上一局超过当前限红');return}clearBetChips(true);const need=betTotal(lastBets);if(bankroll<need){toast(bankroll<=0?'请先输入兑换码兑换本金':'模拟本金不足');return}bankroll-=need;updateBalance();playChipSound();bets={...lastBets};for(const [k,v] of Object.entries(bets)){const box=document.querySelector(`[data-bet="${k}"]`);if(box){flyChip(selectedChip,box,Math.min(v,10000))}}updateBetsDisplay()});
+addEvt(repeatBtn,()=>{if(dealing)return;if(!Object.keys(lastBets).length){toast('暂无上一局下注');return}if(Object.values(lastBets).some(v=>v>AREA_MAX)){toast('上一局超过当前限红');return}clearBetChips(true);const need=betTotal(lastBets);if(bankroll<need){toast(bankroll<=0?'请先输入兑换码兑换本金':'模拟本金不足');return}bankroll-=need;updateBalance();playChipSound();bets={...lastBets};for(const [k,v] of Object.entries(bets)){const box=document.querySelector(`[data-bet="${k}"]`);if(box){flyChip(selectedChip,box,Math.min(v,10000))}}updateBetsDisplay();syncOnlineBets()});
 addEvt(commissionBtn,()=>{noCommission=false;bankerOdds.textContent='1:0.95';toast('庄赢固定抽水5%')});
 addEvt(redeemBtn,openRedeem);
 addEvt(redeemCancel,closeRedeem);
