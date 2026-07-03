@@ -725,7 +725,7 @@ function initOnline(){
   }catch(e){console.error(e);setOnlineStatus('联机失败','off');diag('SDK初始化异常：'+(e.message||e),'err');setTimeout(()=>initRestOnline('SDK异常'),100);return true}
 }
 function betTotal(obj=bets){return Object.values(obj).reduce((s,v)=>s+Number(v||0),0)}
-function updateBetsDisplay(){const shown=ONLINE.enabled?aggregateRoomBets():bets;const p=shown.PLAYER||0,b=shown.BANKER||0,t=shown.TIE||0;document.getElementById('pAmt').textContent=fmt(p);document.getElementById('bAmt').textContent=fmt(b);for(const [k,v] of Object.entries(shown)){const el=document.getElementById('amt_'+k);if(el)el.textContent=fmt(v||0)};document.querySelectorAll('.betAmt').forEach(el=>{if(!el.textContent)el.textContent='0'});const sum=betTotal(shown);document.getElementById('pPct').textContent=sum?Math.round(p/sum*100)+'%':'0%';document.getElementById('bPct').textContent=sum?Math.round(b/sum*100)+'%':'0%';document.getElementById('tPct').textContent=sum?Math.round(t/sum*100)+'%':'0%'}
+function updateBetsDisplay(){const shown=ONLINE.enabled?aggregateRoomBets():bets;const p=shown.PLAYER||0,b=shown.BANKER||0,t=shown.TIE||0;document.getElementById('pAmt').textContent=fmt(p);document.getElementById('bAmt').textContent=fmt(b);for(const el of document.querySelectorAll('.betAmt')){const k=(el.id||'').replace(/^amt_/,'');el.textContent=fmt(shown[k]||0)}const sum=betTotal(shown);document.getElementById('pPct').textContent=sum?Math.round(p/sum*100)+'%':'0%';document.getElementById('bPct').textContent=sum?Math.round(b/sum*100)+'%':'0%';document.getElementById('tPct').textContent=sum?Math.round(t/sum*100)+'%':'0%'}
 function clearBetChips(refund=false){if(refund){const back=betTotal(bets);if(back>0){bankroll+=back;updateBalance();}}document.querySelectorAll('.stackChip').forEach(x=>x.remove());bets={};stackIndex=0;updateBetsDisplay();syncOnlineBets()}
 function flyChip(fromEl, toEl, value){const fr=fromEl.getBoundingClientRect(), tr=toEl.getBoundingClientRect();const appR=app.getBoundingClientRect();const x=fr.left+fr.width/2-16, y=fr.top+fr.height/2-16;const tx=tr.left+tr.width*(.38+Math.random()*.24)-16, ty=tr.top+tr.height*(.42+Math.random()*.24)-16;const f=document.createElement('div');f.className='floatChip '+chipClass(value);f.textContent=fmt(value);f.style.left=x+'px';f.style.top=y+'px';document.body.appendChild(f);requestAnimationFrame(()=>{f.classList.add('fly');f.style.transform=`translate(${tx-x}px,${ty-y}px) scale(.78)`});setTimeout(()=>{f.remove();const s=document.createElement('div');s.className='stackChip '+chipClass(value);s.textContent=fmt(value);const localX=tx-appR.left-board.getBoundingClientRect().left+appR.left;const localY=ty-board.getBoundingClientRect().top;s.style.left=Math.max(8,Math.min(toEl.clientWidth-40, tx-tr.left))+'px';s.style.top=Math.max(8,Math.min(toEl.clientHeight-40, ty-tr.top))+'px';s.style.transform=`translate(${(stackIndex%5)*3}px,${Math.floor(stackIndex/5)*-2}px) scale(.9)`;toEl.appendChild(s);stackIndex++},330)}
 function placeBet(box){if(dealing)return;const k=box.dataset.bet;if((bets[k]||0)+selectedValue>AREA_MAX){toast('单门限红 20万');return}if(bankroll<selectedValue){toast(bankroll<=0?'请先输入兑换码兑换本金':'模拟本金不足');return}bankroll-=selectedValue;updateBalance();bets[k]=(bets[k]||0)+selectedValue;playChipSound();flyChip(selectedChip,box,selectedValue);updateBetsDisplay();syncOnlineBets()}
@@ -888,120 +888,7 @@ function initDealerVideo(){
   v.addEventListener('loadeddata',()=>{ try{v.play().catch(()=>{});}catch(e){} markReady(); });
   v.addEventListener('error',()=>{ app.classList.remove('dealer-video-ready'); });
 })();
-function _safeBetNumber(v){
-  const n = Math.max(0, Math.round(Number(v || 0)));
-  return Number.isFinite(n) ? n : 0;
-}
 
-function _roundNumFromKey(k){
-  const m = String(k || '').match(/R(\d+)/i);
-  return m ? Number(m[1]) : -1;
-}
-
-function _getClientBetItems(){
-  const root = (ONLINE.state && ONLINE.state.clientBets && typeof ONLINE.state.clientBets === 'object')
-    ? ONLINE.state.clientBets
-    : ((ONLINE.remoteBets && typeof ONLINE.remoteBets === 'object') ? ONLINE.remoteBets : {});
-
-  let items = [];
-
-  // 正常结构：clientBets/{clientId}/{roundKey,bets}
-  if (root.bets && typeof root.bets === 'object') {
-    items = [root];
-  } else {
-    items = Object.values(root || {}).filter(x => x && typeof x === 'object');
-  }
-
-  // 立刻把本机未收到回调的下注也算进去，避免本机点击后数字延迟/闪 0。
-  const localBets = clonePlainBets(bets);
-  if (betTotal(localBets) > 0) {
-    const hasLocal = items.some(x => x && x.clientId === ONLINE.clientId);
-    if (!hasLocal) {
-      items.push({
-        clientId: ONLINE.clientId,
-        roundKey: currentBetRoundKey(),
-        bets: localBets,
-        updatedAt: Date.now()
-      });
-    }
-  }
-
-  return items.filter(item => {
-    const map = (item.bets && typeof item.bets === 'object') ? item.bets : item;
-    return betTotal(clonePlainBets(map)) > 0;
-  });
-}
-
-aggregateRoomBets = function(){
-  const total = {PLAYER:0,BANKER:0,TIE:0,PLAYER_PAIR:0,BANKER_PAIR:0,LUCKY7:0,LUCKY6:0,SUPER7:0};
-  const items = _getClientBetItems();
-  if (!items.length) return total;
-
-  const currentKey = currentBetRoundKey();
-
-  // 第一优先：当前局 roundKey 完全匹配。
-  let active = items.filter(item => item.roundKey === currentKey);
-
-  // 第二优先：如果两个设备局号差一拍，不要直接过滤成 0；取 Firebase 里最新一局下注。
-  if (!active.length) {
-    const maxRound = Math.max(...items.map(item => _roundNumFromKey(item.roundKey)));
-    if (Number.isFinite(maxRound) && maxRound >= 0) {
-      active = items.filter(item => _roundNumFromKey(item.roundKey) === maxRound);
-    }
-  }
-
-  // 第三优先：兼容旧结构或没有 roundKey 的下注。
-  if (!active.length) active = items;
-
-  for (const item of active) {
-    const map = (item.bets && typeof item.bets === 'object') ? item.bets : item;
-    for (const k of Object.keys(total)) {
-      total[k] += _safeBetNumber(map[k]);
-    }
-  }
-  return total;
-};
-
-applyRemoteBetState = function(v){
-  ONLINE.remoteBets = (v && typeof v === 'object') ? v : {};
-  if (ONLINE.state) ONLINE.state.clientBets = ONLINE.remoteBets;
-  updateBetsDisplay();
-};
-
-updateBetsDisplay = function(){
-  const shown = ONLINE.enabled ? aggregateRoomBets() : bets;
-  const p = shown.PLAYER || 0;
-  const b = shown.BANKER || 0;
-  const t = shown.TIE || 0;
-
-  const pEl = document.getElementById('pAmt');
-  const bEl = document.getElementById('bAmt');
-  if (pEl) pEl.textContent = fmt(p);
-  if (bEl) bEl.textContent = fmt(b);
-
-  for (const k of ['PLAYER','BANKER','TIE','PLAYER_PAIR','BANKER_PAIR','LUCKY7','LUCKY6','SUPER7']) {
-    const el = document.getElementById('amt_' + k);
-    if (el) el.textContent = fmt(shown[k] || 0);
-  }
-
-  const sum = betTotal(shown);
-  const pPctEl = document.getElementById('pPct');
-  const bPctEl = document.getElementById('bPct');
-  const tPctEl = document.getElementById('tPct');
-  if (pPctEl) pPctEl.textContent = sum ? Math.round(p / sum * 100) + '%' : '0%';
-  if (bPctEl) bPctEl.textContent = sum ? Math.round(b / sum * 100) + '%' : '0%';
-  if (tPctEl) tPctEl.textContent = sum ? Math.round(t / sum * 100) + '%' : '0%';
-};
-
-// 修复：当 clientBets 被清空时，也要把旧远端下注从页面数字清掉；否则会残留上一局数字。
-const _oldApplyOnlineStateForBetSync = applyOnlineState;
-applyOnlineState = function(s){
-  if (!s) return;
-  if (Object.prototype.hasOwnProperty.call(s, 'clientBets')) {
-    applyRemoteBetState(s.clientBets || {});
-  }
-  _oldApplyOnlineStateForBetSync(s);
-};
 deck=makeDeck();initGame();initDealerVideo();setInterval(updateClockText,30000);if(!initOnline())startTimer();
 })();
 </script>
