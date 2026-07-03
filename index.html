@@ -211,7 +211,7 @@ body{display:flex;justify-content:center;align-items:stretch;background:#090909}
 .soundBtn.on{background:linear-gradient(180deg,#ffe082,#b86b16);color:#4a080b;border-color:rgba(255,245,185,.72)}
 
 
-/* 房间同步下注数字：只在有金额时显示，不改变原下注区结构 */
+/* 联机下注数字：只补充数字显示，不改原页面结构 */
 .roomBetAmt{position:absolute;right:5px;bottom:4px;min-width:26px;padding:1px 5px;border-radius:999px;background:rgba(0,0,0,.42);border:1px solid rgba(255,230,160,.32);color:#ffe8a8;font-size:11px;font-weight:900;line-height:1.35;display:none;z-index:8;text-shadow:0 1px 2px #000}
 .roomBetAmt.show{display:block}
 .main.player .roomBetAmt,.main.banker .roomBetAmt{display:none!important}
@@ -346,7 +346,9 @@ let stackIndex = 0;
 const AREA_MAX = 200000; // 单门限红：20万，结果仍然按真实8副牌随机
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-/* ===== 联机同步层：保持原界面，只同步倒计时、开奖、路单、下注数字 ===== */
+/* ===== 联机同步功能：yuan 原界面 + 稳定联机层 =====
+   同步内容：倒计时、开奖结果、开奖记录/路单、所有玩家下注数字。
+   显示原则：房间总下注只用于页面数字显示；本金结算只按本机下注 bets 结算。 */
 const ONLINE_ROUND_SECONDS = 15;
 const BET_KEYS = ['PLAYER','BANKER','TIE','PLAYER_PAIR','BANKER_PAIR','LUCKY7','SUPER7','LUCKY6'];
 let ONLINE = {
@@ -371,9 +373,10 @@ function getRoomId(){
   }catch(e){return window.BACCARAT_ROOM_ID || 'VIP001'}
 }
 function makeClientId(){
+  // 每个页面会话一个 ID；同一个浏览器开两个页面测试，也不会互相覆盖下注。
   try{
-    let id=sessionStorage.getItem('baccarat_online_client_id');
-    if(!id){id='c_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,10);sessionStorage.setItem('baccarat_online_client_id',id)}
+    let id=sessionStorage.getItem('baccarat_online_client_id_v2');
+    if(!id){id='c_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,10);sessionStorage.setItem('baccarat_online_client_id_v2',id)}
     return id;
   }catch(e){return 'c_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,10)}
 }
@@ -393,7 +396,7 @@ function aggregateRoomBets(){
   if(!ONLINE.enabled)return bets;
   const target=currentBetRoundNo();
   const sources=Object.assign({}, ONLINE.remoteBets||{});
-  // 本机下注立即参与显示，不等 Firebase 回传，避免自己刚下注时数字延迟。
+  // 本机下注马上显示，等 Firebase 回传前也不空白。
   sources[ONLINE.clientId]={roundNo:target,bets:cleanBetObject(bets)};
   const totals={};
   Object.values(sources).forEach(item=>{
@@ -478,6 +481,7 @@ function normalizeRoundResult(r){
   return out;
 }
 function makeOnlineRoundResult(){
+  // 由抢到本局开牌权的客户端生成一次结果，写入 Firebase；其他客户端只播放同一个结果。
   const ranks=['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
   const suits=['♠','♥','♣','♦'];
   const rc=()=>({r:ranks[Math.floor(Math.random()*ranks.length)],s:suits[Math.floor(Math.random()*suits.length)]});
